@@ -42,18 +42,26 @@ bool initalize_camera(void) {
     config.xclk_freq_hz = 10000000; // Stable 10MHz XCLK
     
     // Initialize physically in Grayscale 96x96 to bypass ll_cam hardware limitations
-    config.pixel_format = PIXFORMAT_GRAYSCALE;  
+    config.pixel_format = PIXFORMAT_RGB565;  
     config.frame_size = FRAMESIZE_96X96;  
     config.fb_count = 1;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.sccb_i2c_port = 0; 
-    
     esp_err_t Err = esp_camera_init(&config);
     if (Err != ESP_OK) {
         ESP_LOGE(CAM_TAG, "Camera initialization failed with error 0x%x", Err);
         return false;
     }
+	sensor_t* s = esp_camera_sensor_get();
+	if (s != NULL) {
+		s->set_gainceiling(s, GAINCEILING_16X);
+		s->set_brightness(s, 1); // amplify
+		s->set_contrast(s, 1);
 
+		s->set_whitebal(s, 1);
+		s->set_exposure_ctrl(s, 1);
+		
+	}
     // Allocate persistent conversion pool: 96 * 96 * 3 = 27648 bytes
     rgb_conversion_buffer = (uint8_t *)heap_caps_malloc(96 * 96 * 3, MALLOC_CAP_SPIRAM);
     if (rgb_conversion_buffer == NULL) {
