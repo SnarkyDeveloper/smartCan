@@ -9,7 +9,7 @@
 static const char *TAG = "LOADER";
 static const char *LOOP_TAG = "[LOOP] ";
 
-#define LOOP_TIME 3
+#define LOOP_TIME 3 // sec
 
 void app_main(void) {
 	vTaskDelay(pdMS_TO_TICKS(500)); 

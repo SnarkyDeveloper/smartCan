@@ -61,6 +61,7 @@ extern "C" void* load_model_from_file(FILE* file_ptr, uint8_t** model_buffer_out
     return (void*)buffer; 
 }
 
+
 extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_ptr) {
     Identification result = {0.0, 0}; 
 
@@ -94,9 +95,7 @@ extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_
             op_resolver.AddQuantize();      
             op_resolver.AddDequantize();    
             op_resolver.AddLogistic();      
-            
             op_resolver.AddFullyConnected(); 
-            
             ops_registered = true;
         }
 
@@ -109,10 +108,15 @@ extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_
         }
     }
 	
-	camera_fb_t* fb = (camera_fb_t*)camera_fb_ptr;
+    camera_fb_t* fb = (camera_fb_t*)camera_fb_ptr;
     TfLiteTensor* input = global_interpreter->input(0);
 	
-	if (input->type == kTfLiteInt8) {
+    long bluepixels = 0;
+    long pinkpixels = 0;
+    long greenpixels = 0;
+    long whitepixels = 0;
+
+    if (input->type == kTfLiteInt8) {
         int8_t* input_buffer = input->data.int8;
         float scale = input->params.scale;
         int32_t zero_point = input->params.zero_point;
@@ -120,20 +124,45 @@ extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_
         static int debug_pixel_waves = 0;
         if (debug_pixel_waves > 100) debug_pixel_waves = 0; 
 
-        for (size_t i = 0; i < fb->len; ++i) {
-            float normalized = ((float)fb->buf[i] / 127.5f) - 1.0f;
+        size_t tensor_idx = 0;
 
-            int32_t quantized_val = (int32_t)(normalized / scale + zero_point);
-            
-            if (quantized_val < -128) quantized_val = -128;
-            if (quantized_val > 127) quantized_val = 127;
+        for (size_t i = 0; i + 1 < fb->len; i += 2) {
+            uint16_t pixel = (fb->buf[i] << 8) | fb->buf[i + 1];
 
-            input_buffer[i] = (int8_t)quantized_val;
+            uint8_t r = ((pixel >> 11) & 0x1F) << 3;
+            uint8_t g = ((pixel >> 5)  & 0x3F) << 2;
+            uint8_t b = (pixel & 0x1F) << 3;
+
+            uint8_t channels[3] = { r, g, b };
+            for (int c = 0; c < 3; ++c) {
+                float normalized = ((float)channels[c] / 127.5f) - 1.0f;
+                int32_t quantized_val = (int32_t)(normalized / scale + zero_point);
+                
+                if (quantized_val < -128) quantized_val = -128;
+                if (quantized_val > 127) quantized_val = 127;
+
+                if (tensor_idx < input->bytes) {
+                    input_buffer[tensor_idx++] = (int8_t)quantized_val;
+                }
+            }
 
             if (debug_pixel_waves < 3) {
-                ESP_LOGI(TF_TAG, "Pixel [%d] -> Raw Cam Byte: %d | Normalized Float: %.4f | Final INT8: %d", 
-                         debug_pixel_waves, fb->buf[i], normalized, input_buffer[i]);
+                ESP_LOGI(TF_TAG, "Pixel Debug -> R:%d G:%d B:%d | Quantized Last Channel: %d", 
+                         r, g, b, input_buffer[tensor_idx - 1]);
                 debug_pixel_waves++;
+            }
+
+            if (b > 200 && r < 120 && g < 120) {
+                bluepixels++;
+            }
+            if (r > 200 && b > 200 && g < 150) {
+                pinkpixels++;
+            }
+            if (g > 180 && r < 120 && b < 120) {
+                greenpixels++;
+            }
+            if (r > 220 && g > 220 && b > 220) {
+                whitepixels++;
             }
         }
     } else {
@@ -141,7 +170,34 @@ extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_
         return result;
     }
 
-	if (global_interpreter->Invoke() != kTfLiteOk) return result;
+    long highest = bluepixels;
+    if (pinkpixels > highest) highest = pinkpixels;
+    if (greenpixels > highest) highest = greenpixels;
+    if (whitepixels > highest) highest = whitepixels;
+	
+    if (highest > 2000) {
+        if (bluepixels == highest) {
+            ESP_LOGI(TF_TAG, "High pixel count detected (Blue): %ld. Overriding to Recyclable.", bluepixels);
+            return (Identification){.confidence = 0.9, .identification = 1};
+        }
+        if (pinkpixels == highest) {
+            ESP_LOGI(TF_TAG, "High pixel count detected (Pink): %ld. Overriding to Recyclable.", pinkpixels);
+            return (Identification){.confidence = 0.9, .identification = 1};
+        }
+        if (greenpixels == highest) {
+            ESP_LOGI(TF_TAG, "High pixel count detected (Green): %ld. Overriding to Organic.", greenpixels);
+            return (Identification){.confidence = 0.9, .identification = 0};
+        }
+        if (whitepixels == highest) {
+            ESP_LOGI(TF_TAG, "High pixel count detected (White): %ld. Overriding to Recyclable.", whitepixels);
+            return (Identification){.confidence = 0.9, .identification = 1};
+        }
+    }
+
+    if (global_interpreter->Invoke() != kTfLiteOk) {
+        ESP_LOGE(TF_TAG, "Interpreter invocation failed.");
+        return result;
+    }
 
     TfLiteTensor* output = global_interpreter->output(0);
     
@@ -161,3 +217,4 @@ extern "C" Identification run_inference(void* model_buffer_ptr, void* camera_fb_
 
     return result;
 }
+

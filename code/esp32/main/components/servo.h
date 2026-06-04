@@ -38,7 +38,7 @@ bool init_servos() {
 
 #define RECYCLABLE_ANGLE 180
 #define ORGANIC_ANGLE 5
-#define FLAT 93
+#define FLAT 90
 
 void move_servos(Identification result) {
 	if (result.confidence < 0.2) {
@@ -58,7 +58,7 @@ void move_servos(Identification result) {
 		angle
 	);
 	
-	vTaskDelay(pdMS_TO_TICKS(3000)); // keep the servo open for 5s before closing it again
+	vTaskDelay(pdMS_TO_TICKS(500)); // keep the servo open for 5s before closing it again
 	iot_servo_write_angle(
 		LEDC_LOW_SPEED_MODE,
 		0,
